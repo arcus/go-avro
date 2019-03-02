@@ -57,7 +57,7 @@ var participantSchema Record
 avro.UnmarshalSchema(bytes, &participantSchema)
 ```
 
-## Integration with the [LinkedIn GoAvro](https://github.com/linked/goavro) library
+## Integration with the [LinkedIn GoAvro](https://github.com/linkedin/goavro) library
 
 ```go
 // SchemaToCodec returns a new goavro.Codec from the provided avro.Schema.
