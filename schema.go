@@ -108,7 +108,6 @@ func Unmarshal(b []byte) (Schema, error) {
 		}
 
 		// Check for complex type.
-
 		switch s.Type {
 		case "record":
 			x = &Record{}
@@ -141,12 +140,73 @@ type Schema interface {
 	Type() string
 }
 
+// Contains returns true if the schema contains the member schema. In the case of
+// of a union, this will check if the member exists in the union. Otherwise it will
+// check if the member schema is equal to the source schema.
+func Contains(s, m Schema) bool {
+	if u, ok := s.(Union); ok {
+		return u.Contains(m)
+	}
+
+	return Equal(s, m)
+}
+
+// Equal returns true if the two schema are equivalent.
+func Equal(s1, s2 Schema) bool {
+	if s1.Type() != s2.Type() {
+		return false
+	}
+
+	// Check for primitive types which are predefined.
+	if _, ok := s1.(Primitive); ok {
+		return true
+	}
+
+	// Check for logical types which are predefined.
+	switch s1.Type() {
+	case
+		Date.Type(),
+		TimeMillis.Type(),
+		TimeMicros.Type(),
+		TimestampMillis.Type(),
+		TimestampMicros.Type(),
+		Duration.Type():
+
+		return true
+	}
+
+	switch x1 := s1.(type) {
+	case Union:
+		return x1.isEqual(s2)
+	case *Record:
+		return x1.isEqual(s2)
+	case *Enum:
+		return x1.isEqual(s2)
+	case *Map:
+		return x1.isEqual(s2)
+	case *Array:
+		return x1.isEqual(s2)
+	case *Decimal:
+		return x1.isEqual(s2)
+	}
+
+	return false
+}
+
 // Primitive models an Avro primitive type.
 type Primitive string
 
 // Type satisfies the Schema interface for primitive types.
 func (p Primitive) Type() string {
 	return string(p)
+}
+
+func (p Primitive) isEqual(o Schema) bool {
+	x, ok := o.(Primitive)
+	if !ok {
+		return false
+	}
+	return p == x
 }
 
 type Field struct {
@@ -156,6 +216,18 @@ type Field struct {
 	Default interface{} `json:"default,omitempty"`
 	Aliases []string    `json:"aliases,omitempty"`
 	Order   string      `json:"order,omitempty"`
+}
+
+func (f *Field) isEqual(x *Field) bool {
+	if f.Name != x.Name {
+		return false
+	}
+	if !Equal(f.Type, x.Type) {
+		return false
+	}
+	// TODO: support aliases..
+	// TODO: Consider other fields?
+	return true
 }
 
 func (f *Field) UnmarshalJSON(b []byte) error {
@@ -196,6 +268,34 @@ type Record struct {
 	Fields    []*Field
 }
 
+func (r *Record) isEqual(o Schema) bool {
+	x, ok := o.(*Record)
+	if !ok {
+		return false
+	}
+
+	if r.Name != x.Name {
+		return false
+	}
+	if r.Namespace != x.Namespace {
+		return false
+	}
+
+	if len(r.Fields) != len(x.Fields) {
+		return false
+	}
+
+	// TODO: does equality require order?
+	for i, rf := range r.Fields {
+		xf := x.Fields[i]
+		if !rf.isEqual(xf) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (r *Record) Type() string {
 	return "record"
 }
@@ -230,6 +330,32 @@ type Enum struct {
 	Symbols   []string
 }
 
+func (e *Enum) isEqual(o Schema) bool {
+	x, ok := o.(*Enum)
+	if !ok {
+		return false
+	}
+
+	if e.Name != x.Name {
+		return false
+	}
+	if e.Namespace != x.Namespace {
+		return false
+	}
+
+	if len(e.Symbols) != len(x.Symbols) {
+		return false
+	}
+
+	for i, s := range e.Symbols {
+		if x.Symbols[i] != s {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (e *Enum) Type() string {
 	return "enum"
 }
@@ -258,6 +384,15 @@ func (e *Enum) MarshalJSON() ([]byte, error) {
 
 type Array struct {
 	Items Schema
+}
+
+func (a *Array) isEqual(o Schema) bool {
+	x, ok := o.(*Array)
+	if !ok {
+		return false
+	}
+
+	return Equal(a.Items, x.Items)
 }
 
 func (a *Array) Type() string {
@@ -295,6 +430,15 @@ type Map struct {
 	Values Schema
 }
 
+func (m *Map) isEqual(o Schema) bool {
+	x, ok := o.(*Map)
+	if !ok {
+		return false
+	}
+
+	return Equal(m.Values, x.Values)
+}
+
 func (m *Map) Type() string {
 	return "map"
 }
@@ -328,6 +472,35 @@ func (m *Map) UnmarshalJSON(b []byte) error {
 
 type Union []Schema
 
+func (u Union) isEqual(o Schema) bool {
+	x, ok := o.(Union)
+	if !ok {
+		return false
+	}
+
+	if len(u) != len(x) {
+		return false
+	}
+
+	for i, s := range u {
+		if !Equal(s, x[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (u Union) Contains(t Schema) bool {
+	for _, s := range u {
+		if Equal(s, t) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (u Union) Type() string {
 	return "union"
 }
@@ -353,9 +526,29 @@ func (u *Union) UnmarshalJSON(b []byte) error {
 
 type Fixed struct {
 	Name      string
-	Size      int
 	Namespace string
+	Size      int
 	Aliases   []string
+}
+
+func (f *Fixed) isEqual(o Schema) bool {
+	x, ok := o.(*Fixed)
+	if !ok {
+		return false
+	}
+
+	if f.Name != x.Name {
+		return false
+	}
+	if f.Namespace != x.Namespace {
+		return false
+	}
+
+	if f.Size != x.Size {
+		return false
+	}
+
+	return true
 }
 
 func (f *Fixed) Type() string {
@@ -382,6 +575,15 @@ func (f *Fixed) MarshalJSON() ([]byte, error) {
 type Decimal struct {
 	Precision int
 	Scale     int
+}
+
+func (d *Decimal) isEqual(o Schema) bool {
+	x, ok := o.(*Decimal)
+	if !ok {
+		return false
+	}
+
+	return d.Precision == x.Precision && d.Scale == x.Scale
 }
 
 func (d *Decimal) Type() string {
